@@ -1,0 +1,6 @@
+fastapi
+google-genai
+pytest
+python-dotenv
+requests
+uvicorn[standard]

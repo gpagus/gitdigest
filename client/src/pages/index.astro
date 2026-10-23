@@ -1,0 +1,245 @@
+---
+export const prerender = false;
+import '../styles/global.css';
+
+const API_URL = import.meta.env.API_URL ?? 'http://127.0.0.1:8000';
+
+const search = Astro.url.searchParams.get('repo') || '';
+let owner = '';
+let repoName = '';
+let prs = [];
+let errorMessage = null;
+
+if (search) {
+  const match = search.trim().match(
+    /^(?:https?:\/\/)?(?:www\.)?(?:github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[\/?#].*)?$/i
+  );
+  const onlyDots = (s) => /^\.+$/.test(s);
+
+  if (!match || onlyDots(match[1]) || onlyDots(match[2])) {
+    errorMessage = "Formato inválido. Pega la URL de GitHub o usa el formato 'owner/repo'.";
+  } else {
+    [, owner, repoName] = match;
+    try {
+      const res = await fetch(
+        `${API_URL}/api/feed/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}`,
+        { signal: AbortSignal.timeout(10000) }
+      );
+
+      if (res.status === 404) {
+        errorMessage = "Repositorio no encontrado o sin datos procesados.";
+      } else if (!res.ok) {
+        errorMessage = `El servidor respondió con un error (${res.status}).`;
+      } else {
+        const data = await res.json();
+        if (!Array.isArray(data?.data)) {
+          errorMessage = "Respuesta inesperada del servidor.";
+        } else {
+          prs = data.data.filter((pr) => !pr.es_ruido);
+          if (prs.length === 0) {
+            errorMessage = "No hay actualizaciones relevantes para este repositorio.";
+          }
+        }
+      }
+    } catch {
+      errorMessage = "No se pudo conectar con el servidor. Inténtalo de nuevo en unos segundos.";
+    }
+  }
+}
+---
+
+<script>
+  const KEY = "gitdigest:recent";
+  const MAX = 3;
+
+  const box = document.getElementById("search-box");
+  const form = box.querySelector("form");
+  const input = form.querySelector("input[name=repo]");
+  const tray = document.getElementById("recent-tray");
+  const list = document.getElementById("recent-list");
+  const clearBtn = document.getElementById("recent-clear");
+
+  const read = () => {
+    try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; }
+  };
+  const write = (items) => {
+    try { localStorage.setItem(KEY, JSON.stringify(items)); } catch {}
+  };
+
+  const close = () => tray.classList.add("hidden");
+
+  function render() {
+    const items = read();
+    list.replaceChildren(...items.map((repo) => {
+      const li = document.createElement("li");
+      li.className = "flex items-center hover:bg-rock/20";
+
+      const a = document.createElement("a");
+      a.href = `?repo=${encodeURIComponent(repo)}`;
+      a.textContent = repo;
+      a.className = "flex-1 truncate px-5 py-3 text-sm font-semibold text-waikawa hover:text-jaffa";
+
+      const x = document.createElement("button");
+      x.type = "button";
+      x.textContent = "×";
+      x.setAttribute("aria-label", `Quitar ${repo}`);
+      x.className = "cursor-pointer px-4 py-3 text-waikawa/60 hover:text-crail";
+      x.addEventListener("click", () => {
+        write(read().filter((r) => r !== repo));
+        if (!render()) close();
+      });
+
+      li.append(a, x);
+      return li;
+    }));
+    return items.length;
+  }
+
+  const open = () => { if (render()) tray.classList.remove("hidden"); };
+
+  // Guardar solo si esta carga fue una búsqueda satisfactoria
+  const ok = form.dataset.okRepo;
+  if (ok) {
+    write([ok, ...read().filter((r) => r.toLowerCase() !== ok.toLowerCase())].slice(0, MAX));
+  }
+
+  open();
+  clearBtn.addEventListener("click", () => { write([]); close(); });
+</script>
+
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GitDigest</title>
+  </head>
+  <body class="bg-maize/30 min-h-screen text-waikawa font-sans selection:bg-rock/50">
+    
+    <main class={`max-w-3xl mx-auto px-6 transition-all duration-500 flex flex-col ${search ? 'pt-12 pb-24' : 'h-screen justify-center'}`}>
+      
+      <!-- Cabecera y Logo -->
+      <div class="flex flex-col items-center justify-center mb-8">
+        <img src="/logo.png"
+          alt="GitDigest Logo"
+          class="w-40 mb-3 animate-scale-in rounded-2xl"
+          >
+        <h1 class="font-sans text-4xl font-black tracking-tight text-carbon">
+          Git<span class="ml-2 linear-gradient font-hubot rounded-2xl p-1">Digest</span>
+        </h1>
+      </div>
+
+      <!-- Buscador -->
+       
+      <div class="relative flex flex-col items-center justify-center mb-16">
+  <div id="search-box" class="relative z-10 w-full max-w-xl animate-float">
+
+    <form
+      class="search-frame relative flex items-center w-full"
+      method="get"
+      data-ok-repo={search && !errorMessage ? `${owner}/${repoName}` : undefined}
+    >
+      <!-- Logo de GitHub camuflado -->
+      <div class="pointer-events-none absolute inset-y-0 left-0 z-10 w-24 overflow-hidden rounded-l-2xl" aria-hidden="true">
+        <svg class="absolute -top-1 left-3 h-20 w-20 text-waikawa/20" viewBox="0 0 16 16" fill="currentColor">
+          <defs>
+            <clipPath id="gh-cat">
+              <path clip-rule="evenodd" d="M-1-1H17V17H-1Z M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+            </clipPath>
+          </defs>
+          <circle cx="8" cy="8" r="7.6" clip-path="url(#gh-cat)" />
+        </svg>
+      </div>
+
+      <input
+        type="text"
+        name="repo"
+        value={search}
+        autocomplete="off"
+        placeholder="Ej: https://github.com/KytyPS5/KytyPS5"
+        class="w-full py-4 pl-24 pr-16 text-lg bg-maize/30 border-0 rounded-2xl shadow-lg outline-none focus:ring-2 focus:ring-jaffa/40 transition-all text-waikawa placeholder-waikawa/60"
+      />
+
+      <button type="submit" class="search-btn absolute right-3 top-1/2 -translate-y-1/2 p-3 text-white rounded-full hover:scale-105 cursor-pointer transition-all shadow-md">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
+        </svg>
+      </button>
+    </form>
+
+    <!-- Bandeja de recientes -->
+    <div id="recent-tray" class="hidden animate-fade-in absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-rock bg-white/95 shadow-lg">
+      <div class="flex items-center justify-between px-5 pt-3 pb-1">
+        <span class="text-[11px] font-black uppercase tracking-wider text-waikawa/70">Recientes</span>
+        <button id="recent-clear" type="button" class="cursor-pointer text-[11px] font-bold text-waikawa/60 hover:text-crail">Borrar todo</button>
+      </div>
+      <ul id="recent-list" class="pb-2"></ul>
+    </div>
+
+  </div>
+</div>
+
+      <!-- Gestión de errores -->
+      {errorMessage && (
+        <div class="bg-maize/50 text-crail px-6 py-4 rounded-xl border border-crail/30 text-center shadow-sm animate-fade-in">
+          {errorMessage}
+        </div>
+      )}
+
+      <!-- Feed de Resultados -->
+      {prs.length > 0 && (
+        <div class="space-y-6 animate-fade-in">
+          <div class="flex items-center justify-between pb-4 border-b border-rock">
+            <h2 class="font-hubot text-lg font-bold text-waikawa">Actualizaciones recientes</h2>
+            <span class="bg-rock/30 border border-rock text-waikawa text-xs font-bold px-3 py-1 rounded-full shadow-sm">{owner}/{repoName}</span>
+          </div>
+
+          {prs.map((pr) => (
+            <article class="bg-rock/20 p-6 md:p-8 rounded-2xl shadow-sm border border-rock transition-all hover:shadow-md hover:border-waikawa relative overflow-hidden group">
+              <!-- Borde izquierdo de color según relevancia -->
+              <div class={`absolute left-0 top-0 bottom-0 w-1 ${
+                pr.relevancia === 'Alta' ? 'bg-crail' : 
+                pr.relevancia === 'Media' ? 'bg-gray-400' : 
+                'bg-waikawa'
+              }`}></div>
+
+              <div class="flex justify-between items-start mb-4 gap-4">
+                <h3 class="text-xl font-bold text-waikawa leading-tight">
+                  <a href={pr.url} target="_blank" class="hover:text-jaffa transition-colors">
+                    {pr.title}
+                  </a>
+                </h3>
+              </div>
+              
+              <div class="flex flex-wrap gap-2 mb-5">
+                <span class="text-xs font-bold bg-rock/40 text-waikawa px-2.5 py-1 rounded-md">{pr.categoria}</span>
+                <span class="text-xs font-bold bg-rock/40 text-waikawa px-2.5 py-1 rounded-md">{pr.subsistema}</span>
+                {pr.es_regresion && (
+                  <span class="text-xs font-bold bg-crail/10 text-crail border border-crail/30 px-2.5 py-1 rounded-md flex items-center gap-1">
+                    ⚠️ Regresión corregida
+                  </span>
+                )}
+              </div>
+
+              <p class="text-waikawa/90 mb-5 leading-relaxed">{pr.impacto_usuario}</p>
+              
+              {(pr.software_afectado?.length > 0 || pr.plataformas?.length > 0) && (
+                <div class="mt-6 pt-5 border-t border-rock">
+                  <p class="text-[11px] font-black text-waikawa/70 uppercase tracking-wider mb-3">Software / Hardware afectado</p>
+                  <div class="flex gap-2 flex-wrap">
+                    {pr.software_afectado?.map((soft) => (
+                      <span class="text-xs font-semibold bg-rock/30 border border-rock text-waikawa px-3 py-1.5 rounded-lg">{soft}</span>
+                    ))}
+                    {pr.plataformas?.map((plat) => (
+                      <span class="text-xs font-semibold bg-maize/30 border border-rock text-waikawa px-3 py-1.5 rounded-lg">{plat}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+    </main>
+
+  </body>
+</html>
