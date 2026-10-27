@@ -1,0 +1,91 @@
+---
+import PrLink from './PrLink.astro';
+
+// Una entrada del changelog (relevancia Alta o Media).
+const { pr } = Astro.props;
+
+const alta = pr.relevancia === 'Alta';
+const kind = [pr.categoria, pr.subsistema].filter(Boolean).join(', ');
+const software = pr.software_afectado ?? [];
+const plataformas = pr.plataformas ?? [];
+const level = alta ? 3 : 2;
+const bars = ['h-1', 'h-2', 'h-3'];
+
+const link =
+  'underline decoration-rock underline-offset-4 hover:decoration-jaffa focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa';
+---
+
+<article class={alta ? 'py-10 first:pt-0' : 'py-6 first:pt-0'}>
+  <p class={`mb-3 flex items-center gap-2 text-sm ${alta ? 'font-semibold text-carbon' : 'text-waikawa'}`}>
+    <span class="flex h-3 items-end gap-0.5" aria-hidden="true">
+      {bars.map((h, i) => (
+        <span class={`w-[3px] ${h} ${i < level ? (alta ? 'bg-carbon' : 'bg-waikawa') : 'bg-rock'}`}></span>
+      ))}
+    </span>
+    Relevancia {alta ? 'alta' : 'media'}
+  </p>
+
+  <h4
+    class={alta
+      ? 'font-hubot text-xl md:text-2xl leading-snug text-carbon text-pretty'
+      : 'text-[0.9375rem] leading-relaxed text-carbon text-pretty'}
+  >
+    {pr.impacto_usuario}
+  </h4>
+
+  {kind && <p class="mt-2 text-sm text-waikawa">{kind}</p>}
+
+  {pr.es_regresion && (
+    <p class="mt-1 text-sm font-semibold text-crail-ink">Regresión corregida</p>
+  )}
+
+  {(software.length > 0 || plataformas.length > 0) && (
+    <dl class="mt-4 space-y-1 text-sm">
+      {software.length > 0 && (
+        <div class="grid grid-cols-[5.5rem_1fr] gap-x-3">
+          <dt class="text-waikawa">Afecta a:</dt>
+          <dd class="text-carbon">{software.join(', ')}</dd>
+        </div>
+      )}
+      {plataformas.length > 0 && (
+        <div class="grid grid-cols-[5.5rem_1fr] gap-x-3">
+          <dt class="text-waikawa">Plataformas:</dt>
+          <dd class="text-carbon">{plataformas.join(', ')}</dd>
+        </div>
+      )}
+    </dl>
+  )}
+
+  {/* Única caja del feed: es lo que el usuario tiene que hacer */}
+  {pr.accion_requerida && (
+    <div class="mt-5 rounded-lg border border-rock bg-white px-4 py-3 text-sm leading-relaxed text-carbon">
+      <p class="font-semibold">Qué hacer</p>
+      <p class="mt-1">{pr.accion_requerida}</p>
+    </div>
+  )}
+
+  {pr.resumen_tecnico && (
+    <details class="group mt-3">
+      <summary
+        class={`inline-flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm text-waikawa ${link} [&::-webkit-details-marker]:hidden`}
+      >
+        <svg
+          class="h-3.5 w-3.5 transition-transform motion-reduce:transition-none group-open:rotate-90"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <path d="M6 3l5 5-5 5" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
+        Detalle técnico
+      </summary>
+      <p class="mt-1 max-w-prose text-sm leading-relaxed text-carbon">{pr.resumen_tecnico}</p>
+    </details>
+  )}
+
+  <p class="mt-2">
+    <PrLink pr={pr} />
+  </p>
+</article>

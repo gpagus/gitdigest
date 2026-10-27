@@ -44,6 +44,29 @@ def init_db():
                 UNIQUE(repo, pr_number)
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS repository_syncs (
+                repo TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                error TEXT,
+                started_at DATETIME,
+                finished_at DATETIME
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                feedback_type TEXT NOT NULL,
+                message TEXT NOT NULL,
+                repo TEXT,
+                page_url TEXT,
+                ip_address TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'stored',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                sent_at DATETIME,
+                error TEXT
+            )
+        """)
         columns = {
             row["name"] for row in cursor.execute("PRAGMA table_info(processed_prs)")
         }

@@ -1,18 +1,126 @@
 ---
-import '../styles/global.css';
+import "../styles/global.css";
+const {
+  title = "GitDigest",
+  description = "GitDigest es una herramienta que resume los cambios más relevantes de un repositorio de GitHub, ayudándote a entender rápidamente las actualizaciones del proyecto.",
+  keywords = "GitDigest, GitHub, resumen de cambios, actualizaciones de repositorio, herramienta de desarrollo",
+  author = "Agustín Gómez Piñero (gpagus)",
+} = Astro.props;
+const API_URL = import.meta.env.API_URL ?? "http://127.0.0.1:8000";
 ---
 
 <!doctype html>
 <html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="generator" content={Astro.generator} />
-		<title>GitDigest</title>
-	</head>
-	<body>
-		<slot />
-	</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="keywords" content={keywords} />
+    <meta name="author" content={author} />
+    <meta name="robots" content="index, follow" />
+	<!-- Icono de la pestaña -->
+	<link rel="icon" type="image/png" href="/logo.png" />
+	<link rel="apple-touch-icon" href="/logo.png" />
+	<meta name="theme-color" content="#F4E285" />
+	<meta name="msapplication-TileColor" content="#F4E285" />
+  </head>
+
+  <body
+    class="bg-maize/30 min-h-screen flex flex-col text-waikawa font-sans selection:bg-rock/50"
+  >
+    <slot />
+
+    <footer class="w-full border-t border-rock/70 bg-maize/20">
+      <div class="mx-auto flex max-w-3xl flex-col items-center justify-between gap-1 text-sm sm:flex-row">
+        <div class="relative">
+          <button
+            id="help-open"
+            type="button"
+            aria-controls="help-dialog"
+            aria-expanded="false"
+            popovertarget="help-dialog"
+            popovertargetaction="toggle"
+            class="min-h-11 cursor-pointer px-2 font-semibold text-waikawa underline decoration-rock underline-offset-4 transition-colors hover:text-jaffa focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa"
+          >
+            Cómo funciona
+          </button>
+
+          <div
+            id="help-dialog"
+            role="dialog"
+            aria-labelledby="help-title"
+            popover="auto"
+            class="help-popover z-30 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-rock bg-white p-0 text-left text-waikawa shadow-xl"
+          >
+            <div class="p-4">
+              <p class="leading-relaxed">
+                Pega la URL de un repositorio de GitHub o escribe su formato <strong>owner/repo</strong>.
+                GitDigest consulta sus actualizaciones procesadas y muestra las que pueden resultar más útiles para entender los cambios del proyecto.
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="relative">
+          <button
+            id="feedback-open"
+            type="button"
+            aria-controls="feedback-dialog"
+            aria-expanded="false"
+            popovertarget="feedback-dialog"
+            popovertargetaction="toggle"
+            class="min-h-11 cursor-pointer px-2 font-semibold text-waikawa underline decoration-rock underline-offset-4 transition-colors hover:text-jaffa focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa"
+          >
+            Enviar feedback
+          </button>
+
+          <div
+            id="feedback-dialog"
+            role="dialog"
+            aria-labelledby="feedback-title"
+            popover="auto"
+            data-api-url={API_URL}
+            class="feedback-popover z-30 w-[min(24rem,calc(100vw-2rem))] rounded-2xl border border-rock bg-white p-0 text-left text-waikawa shadow-xl"
+          >
+            <form id="feedback-form" class="space-y-4 p-5">
+              <div>
+                <h2 id="feedback-title" class="font-hubot text-xl text-carbon">Cuéntame qué mejorar</h2>
+              </div>
+              <label class="block text-sm font-semibold text-carbon">
+                Tipo
+                <select name="feedback_type" class="mt-1 min-h-11 w-full rounded-lg border border-rock bg-white px-3 text-carbon focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa">
+                  <option value="bug">He encontrado un fallo</option>
+                  <option value="improvement">Tengo una propuesta</option>
+                  <option value="other">Otro comentario</option>
+                </select>
+              </label>
+              <label class="block text-sm font-semibold text-carbon">
+                Mensaje
+                <textarea name="message" minlength="10" maxlength="3000" required rows="5" placeholder="Describe lo que ocurrió o qué cambiarías..." class="mt-1 w-full resize-y rounded-lg border border-rock bg-white p-3 text-carbon placeholder-waikawa/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa"></textarea>
+              </label>
+              <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" class="absolute -left-[9999px] h-px w-px" />
+              <input type="hidden" name="repo" value={Astro.url.searchParams.get("repo") || ""} />
+              <input type="hidden" name="page_url" value={Astro.url.pathname + Astro.url.search} />
+              <p id="feedback-status" class="hidden text-sm" role="status"></p>
+              <button type="submit" class="min-h-11 w-full cursor-pointer rounded-lg bg-jaffa px-5 py-2.5 font-bold text-white transition-colors hover:bg-crail focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa">
+                Enviar
+              </button>
+            </form>
+          </div>
+        </div>
+        <span>
+          Hecho por
+          <a
+            href="https://github.com/gpagus"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex min-h-11 items-center px-2 font-semibold text-waikawa underline decoration-rock underline-offset-4 transition-colors hover:text-jaffa focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa"
+          >
+            gpagus
+          </a>
+        </span>
+      </div>
+    </footer>
+  </body>
 </html>

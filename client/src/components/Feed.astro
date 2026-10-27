@@ -1,0 +1,144 @@
+---
+import FeedEntry from './FeedEntry.astro';
+import PrLink from './PrLink.astro';
+
+const { prs, owner, repo, noiseCount = 0 } = Astro.props;
+
+const link =
+  'underline decoration-rock underline-offset-4 hover:decoration-jaffa focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa';
+
+const fmt = (opts) => new Intl.DateTimeFormat('es-ES', { timeZone: 'UTC', ...opts });
+const dayMonth = fmt({ day: 'numeric', month: 'short' });
+const yearOnly = fmt({ year: 'numeric' });
+const full = fmt({ day: 'numeric', month: 'short', year: 'numeric' });
+const at = (key) => new Date(`${key}T00:00:00Z`);
+
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const rank = (r) => (r === 'Alta' ? 0 : r === 'Media' ? 1 : 2);
+
+// 1. Cronológico (más reciente primero; sin fecha, al final)
+const sorted = [...prs].sort((a, b) => (b.merged_at ?? '').localeCompare(a.merged_at ?? ''));
+
+// 2. Agrupado por día de fusión
+const byDay = new Map();
+for (const pr of sorted) {
+  const key = pr.merged_at ? pr.merged_at.slice(0, 10) : 'sin-fecha';
+  if (!byDay.has(key)) byDay.set(key, []);
+  byDay.get(key).push(pr);
+}
+
+// 3. Dentro de cada día: lo importante primero; lo menor, plegado
+const days = [...byDay.entries()].map(([key, items]) => {
+  const ordered = [...items].sort((a, b) => rank(a.relevancia) - rank(b.relevancia));
+  return {
+    key,
+    main: ordered.filter((p) => rank(p.relevancia) < 2),
+    minor: ordered.filter((p) => rank(p.relevancia) === 2),
+  };
+});
+
+// todos los números salen de los datos.
+const n = prs.length;
+const alta = prs.filter((p) => p.relevancia === 'Alta').length;
+const dated = days.map((d) => d.key).filter((k) => k !== 'sin-fecha');
+const newest = dated[0];
+const oldest = dated[dated.length - 1];
+
+const range = !newest
+  ? ''
+  : oldest === newest
+    ? ` el ${full.format(at(newest))}`
+    : ` entre el ${full.format(at(oldest))} y el ${full.format(at(newest))}`;
+
+const lead = n === 1 ? 'Un cambio con efecto para el usuario' : `${n} cambios con efecto para el usuario`;
+
+const summaryItems = [
+  `${lead}${range}.`,
+  n > 1 && alta > 0 ? (alta === 1 ? 'Uno es de relevancia alta.' : `${alta} son de relevancia alta.`) : '',
+].filter(Boolean);
+
+const noiseText =
+  noiseCount === 1
+    ? 'Se ha descartado un cambio interno que no afecta al usuario.'
+    : `Se han descartado ${noiseCount} cambios internos que no afectan al usuario.`;
+---
+
+<section aria-labelledby="feed-title">
+  <header class="max-w-xl">
+    <h2 id="feed-title" class="font-hubot text-3xl text-carbon break-words">
+      <a href={`https://github.com/${owner}/${repo}`} target="_blank" rel="noreferrer" class={link}>
+        {owner}/{repo}
+      </a>
+    </h2>
+    <ul class="mt-3 list-disc space-y-1 pl-5 text-base leading-relaxed text-carbon">
+      {summaryItems.map((item) => (
+        <li>{item}</li>
+      ))}
+    </ul>
+    {noiseCount > 0 && <p class="mt-2 text-sm text-waikawa">{noiseText}</p>}
+  </header>
+
+    <!-- Separación entre días -->
+  <div class="mt-12 space-y-14">
+    {days.map((day) => (
+      <section
+        class="border-t border-waikawa pt-6 md:grid md:grid-cols-[7rem_1fr] md:gap-x-8"
+        aria-labelledby={`dia-${day.key}`}
+      >
+        <h3 id={`dia-${day.key}`} class="mb-4 md:sticky md:top-6 md:mb-0 md:self-start">
+          {day.key === 'sin-fecha' ? (
+            <span class="font-hubot text-lg leading-tight text-carbon">Sin fecha</span>
+          ) : (
+            <>
+              <time datetime={day.key} class="font-hubot text-lg leading-tight text-carbon">
+                {dayMonth.format(at(day.key))}
+              </time>
+              <span class="block text-sm text-waikawa">{yearOnly.format(at(day.key))}</span>
+            </>
+          )}
+        </h3>
+
+        <div>
+          {day.main.length > 0 && (
+            <div class="divide-y divide-rock/60">
+              {day.main.map((pr) => <FeedEntry pr={pr} />)}
+            </div>
+          )}
+
+          {day.minor.length > 0 && (
+            <details class={`group ${day.main.length > 0 ? 'border-t border-rock/60 pt-1' : ''}`}>
+              <summary
+                class={`inline-flex min-h-11 cursor-pointer list-none items-center gap-2 text-sm text-waikawa ${link} [&::-webkit-details-marker]:hidden`}
+              >
+                <svg
+                  class="h-3.5 w-3.5 transition-transform motion-reduce:transition-none group-open:rotate-90"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  aria-hidden="true"
+                >
+                  <path d="M6 3l5 5-5 5" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+                {plural(day.minor.length, 'cambio menor', 'cambios menores')}
+              </summary>
+              <ul class="divide-y divide-rock/50">
+                {day.minor.map((pr) => (
+                  <li class="py-3">
+                    <p class="text-sm leading-relaxed text-carbon">{pr.impacto_usuario}</p>
+                    {pr.es_regresion && (
+                      <p class="mt-1 text-sm font-semibold text-crail-ink">Regresión corregida</p>
+                    )}
+                    <p class="mt-1">
+                      <PrLink pr={pr} />
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      </section>
+    ))}
+  </div>
+</section>

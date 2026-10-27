@@ -1,6 +1,10 @@
 ---
 export const prerender = false;
 import '../styles/global.css';
+import Layout from '../layouts/Layout.astro';
+import Feed from '../components/Feed.astro';
+
+let noiseCount = 0;
 
 const API_URL = import.meta.env.API_URL ?? 'http://127.0.0.1:8000';
 
@@ -9,11 +13,23 @@ let owner = '';
 let repoName = '';
 let prs = [];
 let errorMessage = null;
+const formatDate = (value) => {
+  if (!value) return '';
+  return new Intl.DateTimeFormat('es-ES', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(value));
+};
 
 if (search) {
-  const match = search.trim().match(
-    /^(?:https?:\/\/)?(?:www\.)?(?:github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[\/?#].*)?$/i
-  );
+  const value = search.trim();
+  const isGithubHost = /^(?:https?:\/\/)?(?:www\.)?github\.com(?:\/|$)/i.test(value);
+  const match = isGithubHost
+    ? value.match(
+        /^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[\/?#].*)?$/i
+      )
+    : value.match(/^([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:[\/?#].*)?$/i);
   const onlyDots = (s) => /^\.+$/.test(s);
 
   if (!match || onlyDots(match[1]) || onlyDots(match[2])) {
@@ -27,7 +43,9 @@ if (search) {
       );
 
       if (res.status === 404) {
-        errorMessage = "Repositorio no encontrado o sin datos procesados.";
+        errorMessage = "Repositorio no encontrado en GitHub.";
+      } else if (res.status === 202) {
+        errorMessage = "El repositorio se está procesando. Vuelve a intentarlo en unos segundos...";
       } else if (!res.ok) {
         errorMessage = `El servidor respondió con un error (${res.status}).`;
       } else {
@@ -36,6 +54,7 @@ if (search) {
           errorMessage = "Respuesta inesperada del servidor.";
         } else {
           prs = data.data.filter((pr) => !pr.es_ruido);
+          noiseCount = data.data.length - prs.length;
           if (prs.length === 0) {
             errorMessage = "No hay actualizaciones relevantes para este repositorio.";
           }
@@ -58,6 +77,12 @@ if (search) {
   const tray = document.getElementById("recent-tray");
   const list = document.getElementById("recent-list");
   const clearBtn = document.getElementById("recent-clear");
+  const helpDialog = document.getElementById("help-dialog");
+  const helpOpen = document.getElementById("help-open");
+  const feedbackDialog = document.getElementById("feedback-dialog");
+  const feedbackOpen = document.getElementById("feedback-open");
+  const feedbackForm = document.getElementById("feedback-form");
+  const feedbackStatus = document.getElementById("feedback-status");
 
   const read = () => {
     try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch { return []; }
@@ -95,7 +120,11 @@ if (search) {
     return items.length;
   }
 
-  const open = () => { if (render()) tray.classList.remove("hidden"); };
+  const open = () => {
+    if (document.activeElement === input && render()) {
+      tray.classList.remove("hidden");
+    }
+  };
 
   // Guardar solo si esta carga fue una búsqueda satisfactoria
   const ok = form.dataset.okRepo;
@@ -103,33 +132,113 @@ if (search) {
     write([ok, ...read().filter((r) => r.toLowerCase() !== ok.toLowerCase())].slice(0, MAX));
   }
 
-  open();
+  input.addEventListener("focus", open);
+  box.addEventListener("focusout", (event) => {
+    if (!box.contains(event.relatedTarget)) close();
+  });
   clearBtn.addEventListener("click", () => { write([]); close(); });
+
+  const positionHelp = () => {
+    if (!helpDialog.matches(":popover-open")) return;
+
+    const buttonRect = helpOpen.getBoundingClientRect();
+    const popoverWidth = helpDialog.offsetWidth;
+    const gap = 12;
+    const horizontalPadding = 16;
+    const left = Math.min(
+      Math.max(buttonRect.left + (buttonRect.width - popoverWidth) / 2, horizontalPadding),
+      window.innerWidth - popoverWidth - horizontalPadding
+    );
+    const top = Math.max(helpDialog.offsetHeight + gap <= buttonRect.top
+      ? buttonRect.top - helpDialog.offsetHeight - gap
+      : horizontalPadding, horizontalPadding);
+
+    helpDialog.style.left = `${left}px`;
+    helpDialog.style.top = `${top}px`;
+  };
+
+  helpDialog.addEventListener("toggle", () => {
+    helpOpen.setAttribute("aria-expanded", String(helpDialog.matches(":popover-open")));
+    if (helpDialog.matches(":popover-open")) requestAnimationFrame(positionHelp);
+  });
+  window.addEventListener("resize", positionHelp);
+  window.addEventListener("scroll", positionHelp, true);
+
+  const positionFeedback = () => {
+    if (!feedbackDialog.matches(":popover-open")) return;
+    const buttonRect = feedbackOpen.getBoundingClientRect();
+    const popoverWidth = feedbackDialog.offsetWidth;
+    const gap = 12;
+    const padding = 16;
+    const left = Math.min(
+      Math.max(buttonRect.left + (buttonRect.width - popoverWidth) / 2, padding),
+      window.innerWidth - popoverWidth - padding
+    );
+    const top = buttonRect.top >= feedbackDialog.offsetHeight + gap
+      ? buttonRect.top - feedbackDialog.offsetHeight - gap
+      : padding;
+    feedbackDialog.style.left = `${left}px`;
+    feedbackDialog.style.top = `${top}px`;
+  };
+
+  feedbackDialog.addEventListener("toggle", () => {
+    feedbackOpen.setAttribute("aria-expanded", String(feedbackDialog.matches(":popover-open")));
+    if (feedbackDialog.matches(":popover-open")) requestAnimationFrame(positionFeedback);
+  });
+  window.addEventListener("resize", positionFeedback);
+  window.addEventListener("scroll", positionFeedback, true);
+
+  feedbackForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = feedbackForm.querySelector("button[type=submit]");
+    const formData = new FormData(feedbackForm);
+    const apiUrl = feedbackDialog.dataset.apiUrl;
+    submit.disabled = true;
+    feedbackStatus.className = "text-sm text-waikawa";
+    feedbackStatus.textContent = "Enviando...";
+    try {
+      const response = await fetch(`${apiUrl}/api/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.fromEntries(formData)),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || "No se pudo enviar el feedback.");
+      }
+      feedbackStatus.className = "text-sm font-semibold text-waikawa";
+      feedbackStatus.textContent = "Gracias. Hemos recibido tu feedback.";
+      feedbackForm.reset();
+    } catch (error) {
+      feedbackStatus.className = "text-sm font-semibold text-crail";
+      feedbackStatus.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  });
 </script>
 
-<html lang="es">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GitDigest</title>
-  </head>
-  <body class="bg-maize/30 min-h-screen text-waikawa font-sans selection:bg-rock/50">
-    
-    <main class={`max-w-3xl mx-auto px-6 transition-all duration-500 flex flex-col ${search ? 'pt-12 pb-24' : 'h-screen justify-center'}`}>
-      
+<Layout>
+    <main class={`w-full max-w-3xl mx-auto flex-1 px-6 transition-all duration-500 flex flex-col ${search ? 'pt-12 pb-24' : 'justify-center'}`}>
+
       <!-- Cabecera y Logo -->
-      <div class="flex flex-col items-center justify-center mb-8">
-        <img src="/logo.png"
-          alt="GitDigest Logo"
-          class="w-40 mb-3 animate-scale-in rounded-2xl"
-          >
+      <div class="flex flex-col items-center justify-center mb-8 text-center">
+        <a href="/">
+          <img src="/logo.png"
+            alt="GitDigest Logo"
+            class="w-40 mb-3 animate-scale-in rounded-2xl"
+            >
+        </a>
         <h1 class="font-sans text-4xl font-black tracking-tight text-carbon">
           Git<span class="ml-2 linear-gradient font-hubot rounded-2xl p-1">Digest</span>
         </h1>
+        <p class="mt-6 text-base italic text-jaffa whitespace-nowrap">
+          Pega la URL de un repo de GitHub y te cuento qué cambió, en cristiano.
+        </p>
       </div>
 
       <!-- Buscador -->
-       
+
       <div class="relative flex flex-col items-center justify-center mb-16">
   <div id="search-box" class="relative z-10 w-full max-w-xl animate-float">
 
@@ -187,59 +296,7 @@ if (search) {
 
       <!-- Feed de Resultados -->
       {prs.length > 0 && (
-        <div class="space-y-6 animate-fade-in">
-          <div class="flex items-center justify-between pb-4 border-b border-rock">
-            <h2 class="font-hubot text-lg font-bold text-waikawa">Actualizaciones recientes</h2>
-            <span class="bg-rock/30 border border-rock text-waikawa text-xs font-bold px-3 py-1 rounded-full shadow-sm">{owner}/{repoName}</span>
-          </div>
-
-          {prs.map((pr) => (
-            <article class="bg-rock/20 p-6 md:p-8 rounded-2xl shadow-sm border border-rock transition-all hover:shadow-md hover:border-waikawa relative overflow-hidden group">
-              <!-- Borde izquierdo de color según relevancia -->
-              <div class={`absolute left-0 top-0 bottom-0 w-1 ${
-                pr.relevancia === 'Alta' ? 'bg-crail' : 
-                pr.relevancia === 'Media' ? 'bg-gray-400' : 
-                'bg-waikawa'
-              }`}></div>
-
-              <div class="flex justify-between items-start mb-4 gap-4">
-                <h3 class="text-xl font-bold text-waikawa leading-tight">
-                  <a href={pr.url} target="_blank" class="hover:text-jaffa transition-colors">
-                    {pr.title}
-                  </a>
-                </h3>
-              </div>
-              
-              <div class="flex flex-wrap gap-2 mb-5">
-                <span class="text-xs font-bold bg-rock/40 text-waikawa px-2.5 py-1 rounded-md">{pr.categoria}</span>
-                <span class="text-xs font-bold bg-rock/40 text-waikawa px-2.5 py-1 rounded-md">{pr.subsistema}</span>
-                {pr.es_regresion && (
-                  <span class="text-xs font-bold bg-crail/10 text-crail border border-crail/30 px-2.5 py-1 rounded-md flex items-center gap-1">
-                    ⚠️ Regresión corregida
-                  </span>
-                )}
-              </div>
-
-              <p class="text-waikawa/90 mb-5 leading-relaxed">{pr.impacto_usuario}</p>
-              
-              {(pr.software_afectado?.length > 0 || pr.plataformas?.length > 0) && (
-                <div class="mt-6 pt-5 border-t border-rock">
-                  <p class="text-[11px] font-black text-waikawa/70 uppercase tracking-wider mb-3">Software / Hardware afectado</p>
-                  <div class="flex gap-2 flex-wrap">
-                    {pr.software_afectado?.map((soft) => (
-                      <span class="text-xs font-semibold bg-rock/30 border border-rock text-waikawa px-3 py-1.5 rounded-lg">{soft}</span>
-                    ))}
-                    {pr.plataformas?.map((plat) => (
-                      <span class="text-xs font-semibold bg-maize/30 border border-rock text-waikawa px-3 py-1.5 rounded-lg">{plat}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
+        <Feed prs={prs} owner={owner} repo={repoName} noiseCount={noiseCount} />
       )}
     </main>
-
-  </body>
-</html>
+</Layout>

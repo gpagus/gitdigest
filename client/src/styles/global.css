@@ -19,6 +19,7 @@
 @theme {
   --font-sans: "Mona Sans", sans-serif;
   --font-hubot: "Hubot Sans", sans-serif;
+  --color-crail-ink: #9a392e;
   --color-waikawa: #5c6b8a;
   --color-rock: #a2b8d2;
   --color-maize: #f5c9a8;
@@ -76,6 +77,50 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .search-btn::before {
+    transition: none;
+  }
+}
+
+.help-popover,
+.feedback-popover {
+  inset: auto;
+  position: fixed;
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease,
+    display 0.2s allow-discrete,
+    overlay 0.2s allow-discrete;
+}
+
+.help-popover:popover-open,
+.feedback-popover:popover-open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.help-popover::backdrop,
+.feedback-popover::backdrop {
+  background-color: transparent;
+}
+
+@starting-style {
+  .help-popover:popover-open,
+  .feedback-popover:popover-open {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .help-popover,
+  .feedback-popover {
+    transition: none;
+  }
+
+  .help-popover::backdrop,
+  .feedback-popover::backdrop {
     transition: none;
   }
 }
