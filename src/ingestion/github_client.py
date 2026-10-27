@@ -63,6 +63,21 @@ class GitHubClient:
             
         return valid_prs
 
+    def get_repository_full_name(self, repo: str) -> str:
+        response = self._get(f"{self.BASE_URL}/repos/{repo}", timeout=15)
+        if response.status_code == 404:
+            raise GitHubAPIError("Repositorio no encontrado en GitHub.")
+        if not response.ok:
+            raise GitHubAPIError(
+                f"GitHub respondió {response.status_code} al validar {repo}: "
+                f"{response.text[:200]}"
+            )
+
+        full_name = response.json().get("full_name")
+        if not full_name:
+            raise GitHubAPIError("GitHub no devolvió el nombre del repositorio.")
+        return full_name
+
     def repository_exists(self, repo: str) -> bool:
         response = self._get(f"{self.BASE_URL}/repos/{repo}", timeout=15)
 

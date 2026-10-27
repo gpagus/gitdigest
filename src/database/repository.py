@@ -4,12 +4,94 @@ from datetime import datetime, timedelta, timezone
 from src.database.connection import get_connection
 
 
+def _decode_feed_row(row) -> dict:
+    pr = dict(row)
+    pr["software_afectado"] = json.loads(pr["software_afectado"]) if pr["software_afectado"] else []
+    pr["plataformas"] = json.loads(pr["plataformas"]) if pr["plataformas"] else []
+    pr["es_ruido"] = bool(pr["es_ruido"])
+    pr["es_regresion"] = bool(pr["es_regresion"])
+    return pr
+
+
+def get_cached_feed(repo: str, limit: int = 20) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT pr_number, title, merged_at, url, categoria, subsistema,
+                relevancia, es_ruido, impacto_usuario, resumen_tecnico,
+                software_afectado, plataformas, accion_requerida, es_regresion
+            FROM processed_prs
+            WHERE lower(COALESCE(canonical_repo, repo)) = lower(?)
+              AND es_ruido = 0
+            ORDER BY merged_at DESC
+            LIMIT ?
+            """,
+            (repo, limit),
+        ).fetchall()
+        return [_decode_feed_row(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_cached_digest(repo: str) -> dict | None:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT COALESCE(MAX(canonical_repo), MAX(repo)) AS repo,
+                COUNT(*) AS cambios,
+                MAX(merged_at) AS ultimo_pr,
+                SUM(CASE WHEN relevancia = 'Alta' THEN 1 ELSE 0 END) AS relevancia_alta
+            FROM processed_prs
+            WHERE lower(COALESCE(canonical_repo, repo)) = lower(?)
+            """,
+            (repo,),
+        ).fetchone()
+        return dict(row) if row and row["repo"] else None
+    finally:
+        conn.close()
+
+
+def get_latest_digests(limit: int = 6) -> list[dict]:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            WITH sync_dates AS (
+                SELECT lower(COALESCE(canonical_repo, repo)) AS repo_key,
+                    MAX(finished_at) AS finished_at
+                FROM repository_syncs
+                GROUP BY lower(COALESCE(canonical_repo, repo))
+            )
+            SELECT COALESCE(MAX(processed.canonical_repo), MAX(processed.repo)) AS repo,
+                COUNT(*) AS cambios,
+                MAX(processed.merged_at) AS ultimo_pr,
+                SUM(CASE WHEN processed.relevancia = 'Alta' THEN 1 ELSE 0 END)
+                    AS relevancia_alta,
+                COALESCE(MAX(sync_dates.finished_at), MAX(processed.created_at)) AS procesado_at
+            FROM processed_prs AS processed
+            LEFT JOIN sync_dates
+                ON sync_dates.repo_key
+                    = lower(COALESCE(processed.canonical_repo, processed.repo))
+            GROUP BY lower(COALESCE(processed.canonical_repo, processed.repo))
+            ORDER BY procesado_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def get_sync_status(repo: str) -> dict | None:
     conn = get_connection()
     try:
         row = conn.execute(
             "SELECT repo, status, error, started_at, finished_at "
-            "FROM repository_syncs WHERE repo = ?",
+            "FROM repository_syncs "
+            "WHERE lower(COALESCE(canonical_repo, repo)) = lower(?)",
             (repo,),
         ).fetchone()
         return dict(row) if row else None
@@ -58,17 +140,23 @@ def claim_sync(repo: str) -> bool:
         conn.close()
 
 
-def finish_sync(repo: str, status: str, error: str | None = None) -> None:
+def finish_sync(
+    repo: str,
+    status: str,
+    error: str | None = None,
+    canonical_repo: str | None = None,
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     conn = get_connection()
     try:
         conn.execute(
             """
             UPDATE repository_syncs
-            SET status = ?, error = ?, finished_at = ?
+            SET status = ?, error = ?, finished_at = ?,
+                canonical_repo = COALESCE(?, canonical_repo)
             WHERE repo = ?
             """,
-            (status, error, now, repo),
+            (status, error, now, canonical_repo, repo),
         )
         conn.commit()
     finally:
@@ -181,7 +269,12 @@ def save_raw_pr(repo: str, pr_data: dict) -> None:
         conn.close()
 
 
-def save_processed_pr(repo: str, pr_data: dict, ia_data: dict) -> None:
+def save_processed_pr(
+    repo: str,
+    pr_data: dict,
+    ia_data: dict,
+    canonical_repo: str | None = None,
+) -> None:
     """Guarda o actualiza la salida estructurada del modelo."""
     conn = get_connection()
     try:
@@ -190,8 +283,9 @@ def save_processed_pr(repo: str, pr_data: dict, ia_data: dict) -> None:
             INSERT INTO processed_prs
                 (repo, pr_number, title, merged_at, url, categoria, subsistema,
                  relevancia, es_ruido, es_regresion, impacto_usuario,
-                 resumen_tecnico, software_afectado, plataformas, accion_requerida)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 resumen_tecnico, software_afectado, plataformas, accion_requerida,
+                 canonical_repo)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(repo, pr_number) DO UPDATE SET
                 title = excluded.title,
                 merged_at = excluded.merged_at,
@@ -205,7 +299,8 @@ def save_processed_pr(repo: str, pr_data: dict, ia_data: dict) -> None:
                 resumen_tecnico = excluded.resumen_tecnico,
                 software_afectado = excluded.software_afectado,
                 plataformas = excluded.plataformas,
-                accion_requerida = excluded.accion_requerida
+                accion_requerida = excluded.accion_requerida,
+                canonical_repo = COALESCE(excluded.canonical_repo, processed_prs.canonical_repo)
             """,
             (
                 repo,
@@ -223,6 +318,7 @@ def save_processed_pr(repo: str, pr_data: dict, ia_data: dict) -> None:
                 json.dumps(ia_data["software_afectado"], ensure_ascii=False),
                 json.dumps(ia_data["plataformas"], ensure_ascii=False),
                 ia_data["accion_requerida"],
+                canonical_repo or repo,
             ),
         )
         conn.commit()
@@ -230,7 +326,12 @@ def save_processed_pr(repo: str, pr_data: dict, ia_data: dict) -> None:
         conn.close()
 
 
-def save_pr(repo: str, pr_data: dict, ia_data: dict) -> None:
+def save_pr(
+    repo: str,
+    pr_data: dict,
+    ia_data: dict,
+    canonical_repo: str | None = None,
+) -> None:
     """Guarda primero el raw y después la salida procesada."""
     save_raw_pr(repo, pr_data)
-    save_processed_pr(repo, pr_data, ia_data)
+    save_processed_pr(repo, pr_data, ia_data, canonical_repo)

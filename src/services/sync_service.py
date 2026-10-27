@@ -14,18 +14,19 @@ def sync_repository(repo: str, limit: int = 15) -> None:
     try:
         gh_client = GitHubClient()
         ai_processor = GeminiProcessor()
+        canonical_repo = gh_client.get_repository_full_name(repo)
 
-        prs = gh_client.fetch_closed_prs(repo, limit=limit)
+        prs = gh_client.fetch_closed_prs(canonical_repo, limit=limit)
         print(f"PRs válidos obtenidos: {len(prs)}")
 
         nuevos = 0
         omitidos = 0
         pendientes = []
         for pr in prs:
-            if pr_exists(repo, pr["id"]):
+            if pr_exists(canonical_repo, pr["id"]):
                 omitidos += 1
                 continue
-            save_raw_pr(repo, pr)
+            save_raw_pr(canonical_repo, pr)
             pendientes.append(pr)
 
         for start in range(0, len(pendientes), BATCH_SIZE):
@@ -50,7 +51,7 @@ def sync_repository(repo: str, limit: int = 15) -> None:
                         analysis["software_afectado"],
                         source_text,
                     )
-                    save_processed_pr(repo, pr, analysis)
+                    save_processed_pr(canonical_repo, pr, analysis, canonical_repo)
                     nuevos += 1
                     print(
                         f"  -> Guardado. Categoría: {analysis.get('categoria')} | "
@@ -60,7 +61,11 @@ def sync_repository(repo: str, limit: int = 15) -> None:
                     print(f"  -> Error procesando #{pr['id']}: {error}")
 
         pendientes_count = len(pendientes) - nuevos
-        finish_sync(repo, "partial" if pendientes_count else "completed")
+        finish_sync(
+            repo,
+            "partial" if pendientes_count else "completed",
+            canonical_repo=canonical_repo,
+        )
         print("\n" + "=" * 50)
         print(
             f"Resultado: {nuevos} añadidos | {omitidos} omitidos "
@@ -69,4 +74,3 @@ def sync_repository(repo: str, limit: int = 15) -> None:
     except Exception as error:
         finish_sync(repo, "failed", str(error))
         print(f"Error sincronizando {repo}: {error}")
-

@@ -1,10 +1,9 @@
-import json
 from typing import Literal
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from src.database.connection import get_connection, init_db
+from src.database.connection import init_db
 from src.config import CORS_ORIGINS
 from src.database.repository import (
     claim_sync,
@@ -14,6 +13,9 @@ from src.database.repository import (
     mark_feedback_sent,
     save_feedback,
     sync_is_due,
+    get_cached_digest,
+    get_cached_feed,
+    get_latest_digests,
 )
 from src.ingestion.github_client import GitHubAPIError, GitHubClient
 from src.notifications.feedback_email import send_feedback_email
@@ -108,37 +110,16 @@ def get_repo_feed(
 ):
     init_db()
     repo_full_name = f"{owner}/{repo_name}"
-    conn = get_connection()
-    try:
-        rows = conn.execute('''
-            SELECT pr_number, title, merged_at, url, categoria, subsistema,
-                relevancia, es_ruido, impacto_usuario, resumen_tecnico,
-                software_afectado, plataformas, accion_requerida, es_regresion
-            FROM processed_prs
-            WHERE repo = ? AND es_ruido = 0
-            ORDER BY merged_at DESC
-            LIMIT ?
-        ''', (repo_full_name, limit)).fetchall()
-        known = rows or conn.execute(
-            "SELECT 1 FROM processed_prs WHERE repo = ? LIMIT 1", (repo_full_name,)
-        ).fetchone()
-    finally:
-        conn.close()
+    digest = get_cached_digest(repo_full_name)
+    feed = get_cached_feed(repo_full_name, limit)
+    known = digest is not None
+    response_repo = digest["repo"] if digest else repo_full_name
 
-    feed = []
-    for row in rows:
-        pr = dict(row)
-        pr['software_afectado'] = json.loads(pr['software_afectado']) if pr['software_afectado'] else []
-        pr['plataformas'] = json.loads(pr['plataformas']) if pr['plataformas'] else []
-        pr['es_ruido'] = bool(pr['es_ruido'])
-        pr['es_regresion'] = bool(pr['es_regresion'])
-        feed.append(pr)
-
-    sync_status = get_sync_status(repo_full_name)
+    sync_status = get_sync_status(response_repo)
     if sync_status and sync_status["status"] == "processing":
         if known:
             return {
-                "repo": repo_full_name,
+                "repo": response_repo,
                 "status": "processing",
                 "message": "Hay una actualización en curso.",
                 "resultados": len(feed),
@@ -147,7 +128,7 @@ def get_repo_feed(
         return JSONResponse(
             status_code=202,
             content={
-                "repo": repo_full_name,
+                "repo": response_repo,
                 "status": "processing",
                 "message": "El repositorio se está procesando.",
             },
@@ -155,7 +136,7 @@ def get_repo_feed(
 
     if not sync_is_due(sync_status, SYNC_COOLDOWN_SECONDS):
         return {
-            "repo": repo_full_name,
+            "repo": response_repo,
             "resultados": len(feed),
             "data": feed,
         }
@@ -175,7 +156,7 @@ def get_repo_feed(
 
     if known:
         return {
-            "repo": repo_full_name,
+            "repo": response_repo,
             "status": "processing",
             "message": "Buscando actualizaciones nuevas.",
             "resultados": len(feed),
@@ -185,11 +166,38 @@ def get_repo_feed(
     return JSONResponse(
         status_code=202,
         content={
-            "repo": repo_full_name,
+            "repo": response_repo,
             "status": "processing",
             "message": "El repositorio se está procesando.",
         },
     )
+
+
+@app.get("/api/digests")
+def get_latest_repo_digests(limit: int = Query(6, ge=1, le=6)):
+    init_db()
+    return {"data": get_latest_digests(limit)}
+
+
+@app.get("/api/digests/{owner}/{repo_name}")
+def get_cached_repo_digest(
+    owner: str,
+    repo_name: str,
+    limit: int = Query(20, ge=1, le=100),
+):
+    init_db()
+    requested_repo = f"{owner}/{repo_name}"
+    digest = get_cached_digest(requested_repo)
+    if not digest:
+        raise HTTPException(status_code=404, detail="Digest no encontrado en caché.")
+
+    feed = get_cached_feed(requested_repo, limit)
+    return {
+        "repo": digest["repo"],
+        "resultados": len(feed),
+        "data": feed,
+    }
+
 
 @app.get("/health")
 def health_check():

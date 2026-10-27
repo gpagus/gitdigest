@@ -1,0 +1,35 @@
+---
+import SearchBox from './SearchBox.astro';
+const { withSearch = false, value = '', okRepo } = Astro.props;
+---
+
+<header
+  id="topbar"
+  data-visible={withSearch ? 'true' : 'false'}
+  class="fixed inset-x-0 top-0 z-40 border-b backdrop-blur-sm border-rock/60 bg-paper transition-[transform,opacity,visibility] duration-200 motion-reduce:transition-none data-[visible=false]:invisible data-[visible=false]:-translate-y-full data-[visible=false]:opacity-0"
+>
+  <div class="mx-auto flex h-16 max-w-3xl items-center gap-4 px-6">
+    <a
+      href="/"
+      class="flex shrink-0 items-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-jaffa"
+      aria-label="GitDigest, volver al inicio"
+    >
+      <img src="/logo.png" alt="" class="h-8 w-8 rounded-lg" />
+      <span class="hidden font-sans text-xl font-black tracking-tight text-carbon sm:inline">
+        Git<span class="linear-gradient ml-1 rounded-lg px-1.5 py-0.5 font-hubot">Digest</span>
+      </span>
+    </a>
+
+    {withSearch ? (
+      <SearchBox compact value={value} okRepo={okRepo} />
+    ) : (
+      <button
+        id="topbar-search"
+        type="button"
+        class="ml-auto min-h-11 cursor-pointer px-2 text-sm text-waikawa underline decoration-rock underline-offset-4 hover:decoration-jaffa focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa"
+      >
+        Buscar repo
+      </button>
+    )}
+  </div>
+</header>

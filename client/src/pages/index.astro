@@ -3,16 +3,20 @@ export const prerender = false;
 import '../styles/global.css';
 import Layout from '../layouts/Layout.astro';
 import Feed from '../components/Feed.astro';
+import TopBar from '../components/TopBar.astro';
+import SearchBox from '../components/SearchBox.astro';
 
 let noiseCount = 0;
 
 const API_URL = import.meta.env.API_URL ?? 'http://127.0.0.1:8000';
 
 const search = Astro.url.searchParams.get('repo') || '';
+const cached = Astro.url.searchParams.get('cached') === '1';
 let owner = '';
 let repoName = '';
 let prs = [];
 let errorMessage = null;
+let latestDigests = [];
 const formatDate = (value) => {
   if (!value) return '';
   return new Intl.DateTimeFormat('es-ES', {
@@ -21,6 +25,18 @@ const formatDate = (value) => {
     year: 'numeric',
   }).format(new Date(value));
 };
+
+try {
+  const res = await fetch(`${API_URL}/api/digests?limit=6`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  if (res.ok) {
+    const data = await res.json();
+    if (Array.isArray(data?.data)) latestDigests = data.data;
+  }
+} catch {
+  latestDigests = [];
+}
 
 if (search) {
   const value = search.trim();
@@ -37,15 +53,20 @@ if (search) {
   } else {
     [, owner, repoName] = match;
     try {
+      const endpoint = cached ? '/api/digests/' : '/api/feed/';
       const res = await fetch(
-        `${API_URL}/api/feed/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}`,
+        `${API_URL}${endpoint}${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}`,
         { signal: AbortSignal.timeout(10000) }
       );
 
       if (res.status === 404) {
-        errorMessage = "Repositorio no encontrado en GitHub.";
+        errorMessage = cached
+          ? "Ese digest no está disponible en caché."
+          : "Repositorio no encontrado en GitHub.";
       } else if (res.status === 202) {
-        errorMessage = "El repositorio se está procesando. Vuelve a intentarlo en unos segundos...";
+        errorMessage = cached
+          ? "Ese digest no está disponible en caché."
+          : "El repositorio se está procesando. Vuelve a intentarlo en unos segundos...";
       } else if (!res.ok) {
         errorMessage = `El servidor respondió con un error (${res.status}).`;
       } else {
@@ -53,6 +74,12 @@ if (search) {
         if (!Array.isArray(data?.data)) {
           errorMessage = "Respuesta inesperada del servidor.";
         } else {
+          if (data.repo) {
+            const canonicalParts = data.repo.split('/');
+            if (canonicalParts.length === 2) {
+              [owner, repoName] = canonicalParts;
+            }
+          }
           prs = data.data.filter((pr) => !pr.es_ruido);
           noiseCount = data.data.length - prs.length;
           if (prs.length === 0) {
@@ -65,6 +92,24 @@ if (search) {
     }
   }
 }
+
+// Dos estados de página: landing (sin búsqueda) y resultados (con búsqueda).
+const hasSearch = Boolean(search);
+const okRepo = search && !errorMessage ? `${owner}/${repoName}` : undefined;
+// Los digests recientes solo se muestran si no hay feed: landing, o como salida tras un error.
+const showDigests = latestDigests.length > 0 && prs.length === 0;
+
+const digestLine = (d) => {
+  const cambios = d.cambios === 1 ? 'Un cambio' : `${d.cambios} cambios`;
+  const alta =
+    d.relevancia_alta > 0
+      ? d.relevancia_alta === 1
+        ? ', uno de relevancia alta'
+        : `, ${d.relevancia_alta} de relevancia alta`
+      : '';
+  const fecha = d.ultimo_pr ? ` Último PR el ${formatDate(d.ultimo_pr)}.` : '';
+  return `${cambios}${alta}.${fecha}`;
+};
 ---
 
 <script>
@@ -102,13 +147,13 @@ if (search) {
       const a = document.createElement("a");
       a.href = `?repo=${encodeURIComponent(repo)}`;
       a.textContent = repo;
-      a.className = "flex-1 truncate px-5 py-3 text-sm font-semibold text-waikawa hover:text-jaffa";
+      a.className = "flex-1 truncate px-5 py-3 text-sm font-semibold text-waikawa";
 
       const x = document.createElement("button");
       x.type = "button";
       x.textContent = "×";
       x.setAttribute("aria-label", `Quitar ${repo}`);
-      x.className = "cursor-pointer px-4 py-3 text-waikawa/60 hover:text-crail";
+      x.className = "cursor-pointer px-4 py-3 text-waikawa hover:text-crail-ink";
       x.addEventListener("click", () => {
         write(read().filter((r) => r !== repo));
         if (!render()) close();
@@ -137,6 +182,24 @@ if (search) {
     if (!box.contains(event.relatedTarget)) close();
   });
   clearBtn.addEventListener("click", () => { write([]); close(); });
+
+  // Barra superior en la landing: aparece cuando el logo grande sale de pantalla
+  const topbar = document.getElementById("topbar");
+  const heroBrand = document.getElementById("hero-brand");
+  if (topbar && heroBrand && "IntersectionObserver" in window) {
+    new IntersectionObserver(
+      ([entry]) => { topbar.dataset.visible = String(!entry.isIntersecting); },
+      { rootMargin: "-64px 0px 0px 0px" }
+    ).observe(heroBrand);
+  }
+
+  // "Buscar repo" en la barra (solo landing): lleva al buscador grande y lo enfoca
+  const topbarSearch = document.getElementById("topbar-search");
+  topbarSearch?.addEventListener("click", () => {
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    input.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
+    input.focus({ preventScroll: true });
+  });
 
   const positionHelp = () => {
     if (!helpDialog.matches(":popover-open")) return;
@@ -210,7 +273,7 @@ if (search) {
       feedbackStatus.textContent = "Gracias. He recibido tu feedback.";
       feedbackForm.reset();
     } catch (error) {
-      feedbackStatus.className = "text-sm font-semibold text-crail";
+      feedbackStatus.className = "text-sm font-semibold text-crail-ink";
       feedbackStatus.textContent = error.message;
     } finally {
       submit.disabled = false;
@@ -219,84 +282,66 @@ if (search) {
 </script>
 
 <Layout>
-    <main class={`w-full max-w-3xl mx-auto flex-1 px-6 transition-all duration-500 flex flex-col ${search ? 'pt-12 pb-24' : 'justify-center'}`}>
+  <TopBar withSearch={hasSearch} value={search} okRepo={okRepo} />
 
-      <!-- Cabecera y Logo -->
-      <div class="flex flex-col items-center justify-center mb-8 text-center">
-        <a href="/">
-          <img src="/logo.png"
-            alt="GitDigest Logo"
-            class="w-40 mb-3 animate-scale-in rounded-2xl"
-            >
-        </a>
-        <h1 class="font-sans text-4xl font-black tracking-tight text-carbon">
-          Git<span class="ml-2 linear-gradient font-hubot rounded-2xl p-1">Digest</span>
-        </h1>
-        <p class="mt-6 text-base italic text-jaffa whitespace-nowrap">
+  {/* Vista de resultados: pt-24 = barra fija (4rem) + 2rem de aire */}
+  <main class={`mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 pb-24 ${hasSearch ? 'pt-24' : 'pt-16'}`}>
+
+    {!hasSearch ? (
+      <section class="flex flex-col items-center text-center">
+        <div id="hero-brand" class="flex flex-col items-center">
+          <a href="/">
+            <img src="/logo.png" alt="GitDigest Logo" class="mb-3 w-40 animate-scale-in rounded-2xl" />
+          </a>
+          <h1 class="font-sans text-4xl font-black tracking-tight text-carbon">
+            Git<span class="ml-2 linear-gradient font-hubot rounded-2xl p-1">Digest</span>
+          </h1>
+        </div>
+        <p class="mt-6 text-base text-waikawa">
           Pega la URL de un repo de GitHub y te cuento qué cambió, en cristiano.
         </p>
-      </div>
-
-      <!-- Buscador -->
-
-      <div class="relative flex flex-col items-center justify-center mb-16">
-  <div id="search-box" class="relative z-10 w-full max-w-xl animate-float">
-
-    <form
-      class="search-frame relative flex items-center w-full"
-      method="get"
-      data-ok-repo={search && !errorMessage ? `${owner}/${repoName}` : undefined}
-    >
-      <!-- Logo de GitHub camuflado -->
-      <div class="pointer-events-none absolute inset-y-0 left-0 z-10 w-24 overflow-hidden rounded-l-2xl" aria-hidden="true">
-        <svg class="absolute -top-1 left-3 h-20 w-20 text-waikawa/20" viewBox="0 0 16 16" fill="currentColor">
-          <defs>
-            <clipPath id="gh-cat">
-              <path clip-rule="evenodd" d="M-1-1H17V17H-1Z M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-            </clipPath>
-          </defs>
-          <circle cx="8" cy="8" r="7.6" clip-path="url(#gh-cat)" />
-        </svg>
-      </div>
-
-      <input
-        type="text"
-        name="repo"
-        value={search}
-        autocomplete="off"
-        placeholder="Ej: https://github.com/KytyPS5/KytyPS5"
-        class="w-full py-4 pl-24 pr-16 text-lg bg-maize/30 border-0 rounded-2xl shadow-lg outline-none focus:ring-2 focus:ring-jaffa/40 transition-all text-waikawa placeholder-waikawa/60"
-      />
-
-      <button type="submit" class="search-btn absolute right-3 top-1/2 -translate-y-1/2 p-3 text-white rounded-full hover:scale-105 cursor-pointer transition-all shadow-md">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
-        </svg>
-      </button>
-    </form>
-
-    <!-- Bandeja de recientes -->
-    <div id="recent-tray" class="hidden animate-fade-in absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-rock bg-white/95 shadow-lg">
-      <div class="flex items-center justify-between px-5 pt-3 pb-1">
-        <span class="text-[11px] font-black uppercase tracking-wider text-waikawa/70">Recientes</span>
-        <button id="recent-clear" type="button" class="cursor-pointer text-[11px] font-bold text-waikawa/60 hover:text-crail">Borrar todo</button>
-      </div>
-      <ul id="recent-list" class="pb-2"></ul>
-    </div>
-
-  </div>
-</div>
-
-      <!-- Gestión de errores -->
-      {errorMessage && (
-        <div class="bg-maize/50 text-crail px-6 py-4 rounded-xl border border-crail/30 text-center shadow-sm animate-fade-in">
-          {errorMessage}
+        <div class="mt-10 flex w-full justify-center">
+          <SearchBox value="" okRepo={okRepo} />
         </div>
-      )}
+      </section>
+    ) : (
+      <h1 class="sr-only">GitDigest</h1>
+    )}
 
-      <!-- Feed de Resultados -->
-      {prs.length > 0 && (
-        <Feed prs={prs} owner={owner} repo={repoName} noiseCount={noiseCount} />
-      )}
-    </main>
+    {/* Errores: texto plano justo debajo de la barra, sin caja */}
+    {errorMessage && (
+      <p role="alert" class="mb-4 text-base leading-relaxed text-crail-ink">
+        {errorMessage}
+      </p>
+    )}
+
+    {showDigests && (
+      <section class={hasSearch ? 'mt-8' : 'mt-20'} aria-labelledby="latest-digests-title">
+        <h2 id="latest-digests-title" class="font-hubot text-2xl text-carbon">Últimos digests</h2>
+        <ul class="mt-5 divide-y divide-rock/60 border-y border-rock/60">
+          {latestDigests.map((digest) => (
+            <li>
+              <a
+                href={`?repo=${encodeURIComponent(digest.repo)}&cached=1`}
+                class="group block py-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-jaffa sm:flex sm:items-baseline sm:justify-between sm:gap-6"
+                aria-label={`Cargar el digest de ${digest.repo}`}
+              >
+                <span class="break-words font-hubot text-lg text-carbon underline decoration-transparent underline-offset-4 group-hover:decoration-jaffa">
+                  {digest.repo}
+                </span>
+                <span class="mt-1 block text-sm text-waikawa sm:mt-0 sm:text-right">
+                  {digestLine(digest)}
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    {/* Feed de Resultados */}
+    {prs.length > 0 && (
+      <Feed prs={prs} owner={owner} repo={repoName} noiseCount={noiseCount} />
+    )}
+  </main>
 </Layout>
