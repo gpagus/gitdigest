@@ -16,6 +16,14 @@ FEEDBACK_SMTP_PASSWORD = os.getenv("FEEDBACK_SMTP_PASSWORD")
 FEEDBACK_FROM_EMAIL = os.getenv("FEEDBACK_FROM_EMAIL")
 FEEDBACK_TO_EMAIL = os.getenv("FEEDBACK_TO_EMAIL")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "https://gitdigest-ia.vercel.app,http://127.0.0.1:4321",
+    ).split(",")
+    if origin.strip()
+]
 
 if not GITHUB_TOKEN or not GEMINI_API_KEY:
     raise ValueError("Faltan variables de entorno requeridas en el archivo .env")

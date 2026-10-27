@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from src.database.connection import get_connection, init_db
+from src.config import CORS_ORIGINS
 from src.database.repository import (
     claim_sync,
     feedback_sent_recently,
@@ -47,6 +48,13 @@ def notify_feedback(
 app = FastAPI(
     title="GitDigest API",
     description="API para acceder a los datos procesados de los pull requests de GitHub.",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 
